@@ -3,10 +3,13 @@ import { HttpClient, HttpHeaders } from '@angular/common/http';
 
 import { Observable } from 'rxjs/Observable';
 import { of } from 'rxjs/observable/of';
-import { catchError, map, tap } from 'rxjs/operators';
+import { fromPromise } from 'rxjs/observable/fromPromise';
+import { catchError, flatMap, tap } from 'rxjs/operators';
+import { transformAndValidate } from 'class-transformer-validator';
 
 import { Hero } from './hero';
 import { MessageService } from './message.service';
+import { ValidationError } from 'class-validator';
 
 const httpOptions = {
   headers: new HttpHeaders({ 'Content-Type': 'application/json' })
@@ -19,8 +22,9 @@ export class HeroService {
   // private heroesUrl = 'http://localhost:3000/api/heroes';  // URL to web api with valid responses
   private heroesUrl = 'http://localhost:3000/api/invalid-heroes';  // URL to web api with some invalid responses
 =======
-  private heroesUrl = 'http://localhost:3000/api/heroes';  // URL to web api
->>>>>>> Initial heroes app with simulation.
+  private heroesUrl = 'http://localhost:3000/api/heroes';  // URL to web api with valid responses
+  // private heroesUrl = 'http://localhost:3000/api/invalid-heroes';  // URL to web api with some invalid responses
+>>>>>>> 32d4c85... Added class validation and transformation.
 
   constructor(
     private http: HttpClient,
@@ -30,6 +34,7 @@ export class HeroService {
   getHeroes(): Observable<Hero[]> {
     return this.http.get<Hero[]>(this.heroesUrl)
       .pipe(
+      flatMap(heroes => Promise.all(heroes.map(hero => transformAndValidate(Hero, hero)))),
       tap(heroes => this.log(`fetched heroes`)),
       catchError(this.handleError('getHeroes', []))
       );
@@ -39,6 +44,7 @@ export class HeroService {
   getHero(id: number): Observable<Hero> {
     const url = `${this.heroesUrl}/${id}`;
     return this.http.get<Hero>(url).pipe(
+      flatMap(hero => transformAndValidate(Hero, hero)),
       tap(_ => this.log(`fetched hero id=${id}`)),
       catchError(this.handleError<Hero>(`getHero id=${id}`))
     );
@@ -98,11 +104,31 @@ export class HeroService {
       console.error(error); // log to console instead
 
       // TODO: better job of transforming error for user consumption
-      this.log(`${operation} failed: ${error.message}`);
+      if (error instanceof Array && error.every(err => err instanceof ValidationError)) {
+        this.log(`${operation} failed: ValidationErrors occured: ${this.validationErrorToStringArray(error).join(' ')}`);
+      } else {
+        this.log(`${operation} failed: ${error.message}`);
+      }
 
       // Let the app keep running by returning an empty result.
       return of(result as T);
     };
+  }
+
+  /**
+   * Reduces the array of ValidationErrors to a simple array containing all error messages (constraint violations).
+   * @param validationErrors - array of validation errors
+   */
+  private validationErrorToStringArray(validationErrors: ValidationError[]): string[] {
+    return validationErrors.reduce((accumulator: string[], currentError: ValidationError): string[] => {
+      if (currentError.constraints === undefined && currentError.children !== undefined) {
+        accumulator.push(...this.validationErrorToStringArray(currentError.children));
+      }
+      if (currentError.constraints !== undefined) {
+        accumulator.push(...Object.values(currentError.constraints).map((value) => value + '.'));
+      }
+      return accumulator;
+    }, []);
   }
 
   /** Log a HeroService message with the MessageService */
